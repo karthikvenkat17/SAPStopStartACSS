@@ -89,12 +89,19 @@
     }
     else {
         Write-Output "DB Type is HANA. Starting DB instance for SAP System $($virtualInstanceName)"
-        $dbstartrc = Start-AzWorkloadsSapDatabaseInstance -InputObject $dbVIS.Id
-        if ($dbstartrc.Status -ne 'Succeeded') {
-            Write-Error "Failed to Start DB Instance for SID $virtualInstanceName" -ErrorAction Stop
+        if ($dbVIS.Status -eq "Running")
+        {
+            Write-Output "DB Instance for SAP System $($virtualInstanceName) is already running. Skipping DB Instance start via ACSS" 
         }
         else {
+            Write-Output "DB Instance for SAP System $($virtualInstanceName) is not running. Starting DB Instance via ACSS" 
+             $dbstartrc = Start-AzWorkloadsSapDatabaseInstance -InputObject $dbVIS.Id
+            if ($dbstartrc.Status -ne 'Succeeded') {
+                Write-Error "Failed to Start DB Instance for SID $virtualInstanceName" -ErrorAction Stop
+            }
+            else {
             Write-Output "Successfully started DB Instance for SID $virtualInstanceName"
+            }
         }
     }
      

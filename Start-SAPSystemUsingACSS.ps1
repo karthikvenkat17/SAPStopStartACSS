@@ -1,12 +1,30 @@
-    param(
+<#
+.SYNOPSIS
+   Used to start SAP Virtual Instance
+
+.DESCRIPTION
+    Runbook checks the status of SAP VIS registration and starts it using VIS commands. Requires Az.Workloads PS module. 
+
+.PARAMETER $virtualInstanceName
+    Name of the VIS to start. This is the SAP System SID
+
+.PARAMETER $virtualInstanceSubscription
+    Subscription ID for the VIS to stop. Defaults to automation account subscription
+
+.NOTES
+    Author: Karthik Venkatraman
+#>
+    
+
+param(
     # Name of the SAP Virtual Instance i.e. SAP System SID
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory = $true)]
     [String]$virtualInstanceName,
     # Resource group of SAP VIS
-    [Parameter(Mandatory=$false)]
-    [String]$virtualInstanceRG
-    )
-    try {
+    [Parameter(Mandatory = $false)]
+    [String]$virtualInstanceSubscription
+)
+try {
 
     Disable-AzContextAutosave -Scope Process
     # Connect to Azure with system-assigned managed identity
@@ -15,18 +33,20 @@
     $AzureContext = Set-AzContext -SubscriptionName $AzureContext.Subscription -DefaultProfile $AzureContext
     Write-Output "Working on subscription $($AzureContext.Subscription) and tenant $($AzureContext.Tenant)"
 
+    if (!$virtualInstanceSubscription) {
+        $virtualInstanceSubscription = $($AzureContext.Subscription)
+    }
+
     # Get VIS Status for the SID
-    $sapVIS = Get-AzWorkloadsSapVirtualInstance -SubscriptionId $($AzureContext.Subscription) | Where-Object {$_.Name -eq $virtualInstanceName}
-    if($sapVIS.State -eq "RegistrationComplete") ##-and ##$sapVIS.Environment -ne "Production" )
-    {  
-    Write-Output "SAP System $($virtualInstanceName) is in RegistrationComplete state" 
+    $sapVIS = Get-AzWorkloadsSapVirtualInstance -SubscriptionId $virtualInstanceSubscription | Where-Object { $_.Name -eq $virtualInstanceName }
+    if ($sapVIS.State -eq "RegistrationComplete") { ##-and ##$sapVIS.Environment -ne "Production" )  
+        Write-Output "SAP System $($virtualInstanceName) is in RegistrationComplete state" 
     }
     else {
         Write-Error "SAP System $($virtualInstanceName) is not in RegistrationComplete state. Skipping SAP Application start via ACSS" -ErrorAction Stop
     }
     # Get SAP System Status
-    if ($sapVIS.Status -eq "Running")
-    {
+    if ($sapVIS.Status -eq "Running") {
         Write-Output "SAP System $($virtualInstanceName) is already running. Skipping SAP Application start via ACSS" 
         exit 0
     }
@@ -52,8 +72,8 @@
     Write-Output "Starting below VMs for SAP System $($virtualInstanceName)"
     $vmList | Format-Table -AutoSize -Property virtualMachineId
     $vmList | ForEach-Object -ThrottleLimit 10 -Parallel {
-       $rc = Start-AzVM -Id $_.virtualMachineId
-       Write-Verbose $rc -Verbose
+        $rc = Start-AzVM -Id $_.virtualMachineId
+        Write-Verbose $rc -Verbose
     }
 
     #Check status of VMs before starting SAP System
@@ -71,11 +91,11 @@
     }
     if ($failedVMs.Count -gt 0) {
         Write-Error "Failed to start VMs for SAP System $($virtualInstanceName). See list below" -ErrorAction Stop
-        $failedVMs | Format-Table -AutoSize -Property Name,ResourceGroupName,@{label='VMStatus'; Expression = {$_.Statuses[1].DisplayStatus}}
+        $failedVMs | Format-Table -AutoSize -Property Name, ResourceGroupName, @{label = 'VMStatus'; Expression = { $_.Statuses[1].DisplayStatus } }
     }
     else {
         Write-Output "Successfully started VMs for SAP System $($virtualInstanceName)"
-        $startedVMs | Format-Table -AutoSize -Property Name,ResourceGroupName,@{label='VMStatus'; Expression = {$_.Statuses[1].DisplayStatus}}
+        $startedVMs | Format-Table -AutoSize -Property Name, ResourceGroupName, @{label = 'VMStatus'; Expression = { $_.Statuses[1].DisplayStatus } }
     }
 
     # Sleep for 1 minute to allow VMs to start
@@ -83,24 +103,23 @@
 
     # Start DB instance
     Write-Output "Checking DB Type for $($virtualInstanceName)"
-    if ($dbVIS.DatabaseType -ne "hdb"){
+    if ($dbVIS.DatabaseType -ne "hdb") {
         Write-Output "DB Type is not HANA. Cannot be started by ACSS"
         Write-Output "Add additonal script to start DB instance for DB Type $($dbVIS.DatabaseType)"
     }
     else {
         Write-Output "DB Type is HANA. Starting DB instance for SAP System $($virtualInstanceName)"
-        if ($dbVIS.Status -eq "Running")
-        {
+        if ($dbVIS.Status -eq "Running") {
             Write-Output "DB Instance for SAP System $($virtualInstanceName) is already running. Skipping DB Instance start via ACSS" 
         }
         else {
             Write-Output "DB Instance for SAP System $($virtualInstanceName) is not running. Starting DB Instance via ACSS" 
-             $dbstartrc = Start-AzWorkloadsSapDatabaseInstance -InputObject $dbVIS.Id
+            $dbstartrc = Start-AzWorkloadsSapDatabaseInstance -InputObject $dbVIS.Id
             if ($dbstartrc.Status -ne 'Succeeded') {
                 Write-Error "Failed to Start DB Instance for SID $virtualInstanceName" -ErrorAction Stop
             }
             else {
-            Write-Output "Successfully started DB Instance for SID $virtualInstanceName"
+                Write-Output "Successfully started DB Instance for SID $virtualInstanceName"
             }
         }
     }
@@ -109,15 +128,15 @@
     Write-Output "Staring Central Services and app servers Instances for SID $virtualInstanceName" 
     $appstartrc = Start-AzWorkloadsSapVirtualInstance -InputObject $sapVIS.Id
     if ($appstartrc.Status -ne 'Succeeded') {
-                Write-Error "Failed to Start App Services Instance for SID $virtualInstanceName" -ErrorAction Stop
+        Write-Error "Failed to Start App Services Instance for SID $virtualInstanceName" -ErrorAction Stop
     }
     else {
-           Write-Output "Successfully started SAP System $virtualInstanceName"
-        }
+        Write-Output "Successfully started SAP System $virtualInstanceName"
+    }
     
     # Final display of VIS status
-    $updatedVIS = Get-AzWorkloadsSapVirtualInstance -SubscriptionId $($AzureContext.Subscription) | Where-Object {$_.Name -eq $virtualInstanceName}
-    $updatedVIS | Format-Table -AutoSize -Property Name,ResourceGroupName,Health,Environment,ProvisioningState,Location,Status 
+    $updatedVIS = Get-AzWorkloadsSapVirtualInstance -SubscriptionId $virtualInstanceSubscription | Where-Object { $_.Name -eq $virtualInstanceName }
+    $updatedVIS | Format-Table -AutoSize -Property Name, ResourceGroupName, Health, Environment, ProvisioningState, Location, Status 
 }
 catch {
     Write-Error  $_.Exception.Message
